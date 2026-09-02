@@ -1,0 +1,57 @@
+name: Keep GitHub green
+
+# Future days: random 2–7 commits. Skip if today already has at least MIN
+# (so a second run does not stack another batch).
+
+on:
+  schedule:
+    # ~18:17 Warsaw / Kyiv in summer (UTC+2 / UTC+3). Cron is always UTC.
+    - cron: "17 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  contribute:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: keep-green
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 20
+
+      - name: Commit as the repo owner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          MIN: "2"
+          MAX: "7"
+        run: |
+          set -euo pipefail
+
+          USER_ID="$(gh api "users/$OWNER" --jq .id)"
+          git config user.name "$OWNER"
+          git config user.email "${USER_ID}+${OWNER}@users.noreply.github.com"
+
+          TODAY="$(date -u +%Y-%m-%d)"
+          COUNT="$(git log --pretty=format:%ad --date=short | grep -c "^${TODAY}$" || true)"
+
+          if [ "$COUNT" -ge "$MIN" ]; then
+            echo "Today already has $COUNT commits (>= $MIN). Skipping."
+            exit 0
+          fi
+
+          TARGET=$((RANDOM % (MAX - MIN + 1) + MIN))
+          echo "Filling $TODAY from $COUNT to $TARGET commits"
+
+          while [ "$COUNT" -lt "$TARGET" ]; do
+            git commit --allow-empty -m "chore: daily activity ${TODAY} $((COUNT + 1))/${TARGET}"
+            COUNT=$((COUNT + 1))
+          done
+
+          git pull --rebase origin "$GITHUB_REF_NAME" || true
+          git push origin "HEAD:$GITHUB_REF_NAME"
